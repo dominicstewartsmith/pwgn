@@ -1,5 +1,5 @@
 use rand::{self, seq::SliceRandom, Rng};
-use std::{char::from_u32, cmp, env::args, option};
+use std::{env::args};
 
 const UPPERCASE_LETTERS: [char; 26] = [
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
@@ -10,11 +10,11 @@ const LOWERCASE_LETTERS: [char; 26] = [
     't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 const NUMBERS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-const SPECIALS: [char; 6] = ['$', '@', '*', '&', '=', '%'];
+const SPECIALS: [char; 10] = ['$', '@', '*', '&', '=', '%', '+', ';', '^', '-'];
 
-// todo - geneate from ascii char code instead of hardcoded arrays
 #[derive(Debug)]
 struct Options {
+    default_values: bool,
     using_custom_format: bool,
     using_custom_length: bool,
     output_length: usize,
@@ -25,6 +25,7 @@ struct Options {
 impl Options {
     fn default () -> Options {
         Options {
+            default_values: true,
             using_custom_format: false,
             using_custom_length: false,
             output_length: 12,
@@ -36,7 +37,7 @@ impl Options {
 
 fn validate_format(format: &String) -> bool {
 
-    // Refactor to Result<>
+    // Refactor to Result<>?
 
     // Format string must contain at least one of l, u, n, s
     // Min length 6
@@ -64,23 +65,25 @@ fn parse_options_from_args (arguments: Vec<String>) -> Options {
 
         match arg.as_str() {
             "-r" => options.randomise_output = true,
-            "-f" => accept_format = true,
+            "-f" => accept_format = true,            
             other => {
                 if accept_format {
-                    let input_format = String::from(other).chars().filter(|&c| (c as u32) >= 32 && (c as u32) <= 126).collect::<String>(); // Filter non-printable ASCII);
+                    let input_format = other.chars().filter(|&c| (c as u32) >= 32 && (c as u32) <= 126).collect::<String>(); // Filter non-printable ASCII;
 
                     if validate_format(&input_format){
                         options.format = input_format;
                         options.using_custom_format = true;
+                        options.default_values = false;
                     }
 
                     accept_format = false;
                     continue;
                 }
                 if let Ok(parsed_value) = other.parse::<usize>() {
-                    options.output_length = if parsed_value < 6 { 6 } else if parsed_value > 255 { 255 } else { parsed_value }; // min 6, max 255
+                    options.output_length = if parsed_value < 6 { println!("Length too small, changing to 6."); 6 } else if parsed_value > 255 { println!("Length too long, changing to 255."); 255 } else { parsed_value }; // min 6, max 255
+                    options.default_values = false;
                     options.using_custom_length = true;
-                    if !options.using_custom_format { options.format.clear(); }
+                    options.format = generate_format_from_custom_length(options.output_length);
                 }
 
             }
@@ -89,7 +92,20 @@ fn parse_options_from_args (arguments: Vec<String>) -> Options {
 
     // Only allow either custom format, or custom length.
     // If we received a custom format, it takes priority.
+    if options.using_custom_format && options.using_custom_length {
+        println!("A custom format takes priority over a custom length, so your custom length will be ignored.");
+        options.using_custom_length = false;
+    }
+
     if options.using_custom_format { options.output_length = options.format.len(); }
+
+    if options.randomise_output {
+        let mut rng = rand::rng();
+
+        let mut copy: Vec<char> = options.format.clone().chars().collect();
+        copy.shuffle(&mut rng);
+        options.format = copy.into_iter().collect();
+    }
 
     options
 }
@@ -97,62 +113,42 @@ fn main() {
     let arguments: Vec<String> = args().skip(1).collect();
     let options = parse_options_from_args(arguments);
 
-    generate_password_from_options(&options);
+    let generated = generate_password_from_options(&options);
 
-    println!("{:?}", options);
-
-
-    
-
-
-    // let res = generate_valid(&mut options);
-
-    // if options.randomise_output {
-        
-    //     let mut rng = rand::rng();
-    //     let mut copy: Vec<char> = res.clone().chars().collect();
-    //     copy.shuffle(&mut rng);
-    //     println!("{0}, {1}", res, copy.into_iter().collect::<String>());
-    // };
-
-    // println!("{0}, {1}", res, options.randomise_output);
+    //println!("{:?}", options);
+    println!("{}", generated);
 }
 
 fn generate_password_from_options (options: &Options) -> String {
     let mut output = String::new();
 
-    if options.using_custom_format {
-        for c in options.format.chars() {
-            output.push(match_format_char_to_replacement(c));
-        }
-    }
+    for c in options.format.chars() {
+        output.push(match_format_char_to_replacement(c));
+    }    
 
     output
 }
 
-fn generate_random_format (length: usize) {
-    // Hard limit to max 2 special characters and numbers
-    let mut rng = rand::rng();
 
-    let mut inserted_numbers = 0;
-    let mut inserted_specials = 0;
-
+fn generate_format_from_custom_length (length: usize) -> String {
     let mut output = String::new();
+    
+    // Hard limit max special characters and numbers depending on password length
+    let mut max_inserts = if length <= 8 { 1 } else { 2 };
 
-    let mut rand_index = rng.random_range(0..SPECIALS.len());
-    output.push(SPECIALS[rand_index]);
+    let half = (length - max_inserts) / 2;
 
-    rand_index = rng.random_range(0..NUMBERS.len());
-    output.push(NUMBERS[rand_index]);
-
-    let i = 2;
-    while i < length {
-        let c = unsafe { char::from_u32_unchecked(rng.random_range(65..=122)) };
-        output.push(c); // cannot fail
+    for num in 0..length-max_inserts {
+        output.push(if num < half { 'l' } else { 'u' });
     }
 
+    while max_inserts > 0 {
+        output.push('n');
+        output.push('s');
+        max_inserts -= 1;
+    }
 
-
+    output
 }
 
 fn match_format_char_to_replacement(char: char) -> char {
@@ -165,94 +161,6 @@ fn match_format_char_to_replacement(char: char) -> char {
     }
 }
 
-fn generate_valid(mut options: &mut Options) -> String {
-    let mut generated_password = generate(&mut options);
-
-    while !validate(&generated_password) {
-       generated_password = generate(&mut options);
-    };
-
-    generated_password
-}
-
-fn generate(options: &mut Options) -> String {
-    println!("here");
-
-    let mut rng = rand::rng();
-
-    let mut random_output = String::new();
-
-    // If a custom length is selected, randomise output by default
-    if options.output_length != 0 {
-        options.randomise_output = true;
-    };
-
-    if options.randomise_output && options.output_length > 0 {
-        for _ in 0..options.output_length {
-            let rand = rng.random_range(0..=100);
-            match rand {
-                0..=25 => random_output.push('l'),
-                26..=50 => random_output.push('u'),
-                51..=75 => random_output.push('n'),
-                76..=100 => random_output.push('s'),
-                _ => ()
-            }
-        }
-
-        options.format = random_output;
-        
-    }
-
-    let mut output = String::new();
-
-    for x in options.format.chars() {
-        output.push(match x {
-            'l' => pick_char(&LOWERCASE_LETTERS),
-            'u' => pick_char(&UPPERCASE_LETTERS),
-            'n' => pick_char(&NUMBERS),
-            's' => pick_char(&SPECIALS),
-            _ => x,
-        });
-    }
-
-    output
-
-
-}
-fn validate (generated_password: &String) -> bool {
-    // validate occurence of each type
-    let (mut upper_found, mut lower_found, mut num_found, mut special_found) = ( false, false, false, false );
-
-
-    for chr in generated_password.chars() {
-        if !upper_found {
-            if UPPERCASE_LETTERS.contains(&chr) {
-                upper_found = true;
-            }
-        }
-
-        if !lower_found {
-            if LOWERCASE_LETTERS.contains(&chr) {
-                lower_found = true;
-            }
-        }
-
-        if !num_found {
-            if NUMBERS.contains(&chr) {
-                num_found = true;
-            }
-        }
-
-        if !special_found {
-            if SPECIALS.contains(&chr) {
-                special_found = true;
-            }
-        }
-    };
-
-    upper_found && lower_found && num_found && special_found
-
-}
 fn pick_char(charset: &[char]) -> char {
     let mut rng = rand::rng();
     let index = rng.random_range(0..charset.len());
